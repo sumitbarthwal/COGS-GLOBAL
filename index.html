@@ -284,7 +284,8 @@
     padding:6px 8px;
   }
   .appt-form input[type="date"]{ color-scheme: dark; }
-  .appt-form input.appt-name{ flex:1; min-width:140px; }
+  .appt-form input.appt-name{ flex:1; min-width:110px; }
+  .appt-form input.appt-loc{ flex:1; min-width:110px; }
   .appt-form button{
     font-family:'Space Grotesk', sans-serif;
     font-weight:600;
@@ -495,10 +496,11 @@ function haversine(lat1, lon1, lat2, lon2){
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// REMEMBER TO PASTE YOUR JSONBIN KEYS HERE
 const CONFIG = {
   googleMapsApiKey: "",
-  jsonbinApiKey: "$2a$10$R3upaZ54qJoaveDtCh755OPyKntKjrFC.np5kSsTGneiL4P0o4ZH",
-  jsonbinBinId: "6a60d54af5f4af5e29b140c4"
+  jsonbinApiKey: "",
+  jsonbinBinId: ""
 };
 
 async function fetchWithRetry(url, options, attempts){
@@ -517,8 +519,7 @@ async function fetchWithRetry(url, options, attempts){
   throw lastErr;
 }
 
-// ---- Appointment remarks ("Appointed for <date> by <name>") ----
-const APPT_STORAGE_KEY = "cogs_surveyor_appointments_v2";
+const APPT_STORAGE_KEY = "cogs_surveyor_appointments_v3";
 
 function getTodayStr(){
   const d = new Date();
@@ -540,7 +541,7 @@ function escapeHtml(str){
   ));
 }
 
-// Reads the shared appointment map { surveyorName: [{date, by, ts}, ...] }
+// Reads shared appointments from JSONBin with fallback to LocalStorage
 async function fetchAppointments(){
   if (CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId){
     try {
@@ -549,16 +550,24 @@ async function fetchAppointments(){
         { headers: { "X-Master-Key": CONFIG.jsonbinApiKey } },
         2
       );
-      const data = await res.json();
-      if (data && data.record && typeof data.record === "object") return data.record;
-    } catch (e) { /* fall through to local */ }
+      if (!res.ok) {
+        console.error("JSONBin Fetch Error:", res.status, res.statusText);
+      } else {
+        const data = await res.json();
+        if (data && data.record && typeof data.record === "object") return data.record;
+      }
+    } catch (e) {
+      console.error("JSONBin Network Error during fetch:", e);
+    }
+  } else {
+    console.warn("JSONBin keys missing in CONFIG. Operating in LocalStorage mode.");
   }
   try {
     return JSON.parse(localStorage.getItem(APPT_STORAGE_KEY) || "{}");
   } catch (e) { return {}; }
 }
 
-// Writes the appointment map back (filtering out expired appointments per surveyor array)
+// Writes appointments back to cloud/local storage
 async function saveAppointments(obj){
   const today = getTodayStr();
   const trimmed = {};
@@ -573,16 +582,26 @@ async function saveAppointments(obj){
 
   if (CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId){
     try {
-      await fetchWithRetry(
+      const res = await fetchWithRetry(
         "https://api.jsonbin.io/v3/b/" + CONFIG.jsonbinBinId,
         {
           method: "PUT",
-          headers: { "X-Master-Key": CONFIG.jsonbinApiKey, "Content-Type": "application/json" },
+          headers: { 
+            "X-Master-Key": CONFIG.jsonbinApiKey, 
+            "Content-Type": "application/json" 
+          },
           body: JSON.stringify(trimmed)
         },
         2
       );
-    } catch (e) { /* still keep a local copy below even if sync failed */ }
+      if (!res.ok) {
+        console.error("JSONBin Save Error:", res.status, res.statusText);
+      } else {
+        console.log("Successfully synced appointment to cloud!");
+      }
+    } catch (e) { 
+      console.error("JSONBin Network Error during save:", e); 
+    }
   }
   try { localStorage.setItem(APPT_STORAGE_KEY, JSON.stringify(trimmed)); } catch (e) {}
   return trimmed;
@@ -836,29 +855,32 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
       ? '<div class="road">(straight-line: ' + Math.round(s.straightLine) + ' km)</div>'
       : '';
     
-    // Process list of active appointments for this surveyor
+    // Retrieve list of active appointments for this surveyor
     const rawAppts = appointmentsCache[s.name];
     const apptList = Array.isArray(rawAppts) ? rawAppts : (rawAppts ? [rawAppts] : []);
     const activeAppts = apptList.filter(a => a && a.date && a.date >= todayStr);
 
-    // Build html list for comments: First comment added remains on top
+    // Formats: Appointed for "Date" by "Name" at "Location"
     let apptListMarkup = '';
     if (activeAppts.length > 0) {
       apptListMarkup = '<div class="appt-list">' +
         activeAppts.map((a, idx) => 
           '<span class="appt-tag ' + (idx === 0 ? 'first-appt' : '') + '">' +
             (idx === 0 ? '📌 ' : '💬 ') +
-            'Appointed for ' + escapeHtml(formatDateDisplay(a.date)) + ' by ' + escapeHtml(a.by) +
+            'Appointed for "' + escapeHtml(formatDateDisplay(a.date)) + '"' +
+            ' by "' + escapeHtml(a.by) + '"' +
+            (a.location ? ' at "' + escapeHtml(a.location) + '"' : '') +
           '</span>'
         ).join('') +
       '</div>';
     }
 
-    const addBtnMarkup = '<button type="button" class="appt-add-btn" data-appt-idx="' + i + '">+ Add Appointment / Comment</button>';
+    const addBtnMarkup = '<button type="button" class="appt-add-btn" data-appt-idx="' + i + '">+ Add Appointment</button>';
     const apptFormMarkup = 
       '<div class="appt-form" id="appt-form-' + i + '" style="display:none;">' +
         '<input type="date" class="appt-date" value="' + todayStr + '">' +
-        '<input type="text" class="appt-name" placeholder="Your name / Remark" maxlength="60">' +
+        '<input type="text" class="appt-name" placeholder="Name" maxlength="40">' +
+        '<input type="text" class="appt-loc" placeholder="Location" maxlength="50">' +
         '<button type="button" class="save" data-appt-save="' + i + '">Save</button>' +
         '<button type="button" class="cancel" data-appt-cancel="' + i + '">Cancel</button>' +
       '</div>';
@@ -915,28 +937,33 @@ function attachApptHandlers(){
       const form = document.getElementById("appt-form-" + idx);
       const dateInput = form.querySelector(".appt-date");
       const nameInput = form.querySelector(".appt-name");
+      const locInput = form.querySelector(".appt-loc");
+      
       const dateVal = dateInput.value;
       const nameVal = nameInput.value.trim();
+      const locVal = locInput.value.trim();
       
-      if (!dateVal || !nameVal){
-        nameInput.style.borderColor = "var(--danger)";
-        return;
-      }
+      let hasError = false;
+      if (!dateVal) { dateInput.style.borderColor = "var(--danger)"; hasError = true; }
+      if (!nameVal) { nameInput.style.borderColor = "var(--danger)"; hasError = true; }
+      if (!locVal)  { locInput.style.borderColor = "var(--danger)";  hasError = true; }
+      
+      if (hasError) return;
+
       const surveyor = lastRanked[parseInt(idx, 10)];
       if (!surveyor) return;
 
       btn.disabled = true;
       btn.textContent = "Saving...";
 
-      // Re-fetch latest entries before saving to support multiple user additions
       const latest = await fetchAppointments();
       let existingList = latest[surveyor.name];
       if (!Array.isArray(existingList)) {
         existingList = existingList ? [existingList] : [];
       }
 
-      // Append new appointment to array (preserves initial comment on top)
-      existingList.push({ date: dateVal, by: nameVal, ts: Date.now() });
+      // Appends new appointment object containing Date, Name, and Location
+      existingList.push({ date: dateVal, by: nameVal, location: locVal, ts: Date.now() });
       latest[surveyor.name] = existingList;
 
       const saved = await saveAppointments(latest);
@@ -1016,6 +1043,15 @@ async function runSearch(){
     status.classList.remove("show");
   }
 }
+
+// Background auto-polling every 10 seconds to sync results live across devices
+setInterval(async () => {
+  if (lastLoc && CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId) {
+    const latest = await fetchAppointments();
+    appointmentsCache = latest;
+    renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
+  }
+}, 10000);
 
 btn.addEventListener("click", runSearch);
 input.addEventListener("keydown", e => {

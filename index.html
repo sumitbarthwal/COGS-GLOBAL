@@ -1563,6 +1563,24 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
+// 50-second background polling loop (with open form state protection)
+setInterval(async () => {
+  try {
+    const latest = await fetchAppointments();
+    appointmentsCache = latest;
+    
+    // Check if any appointment add form is currently open
+    const isFormOpen = Array.from(document.querySelectorAll('.appt-form')).some(f => f.style.display === 'flex');
+    
+    // Refresh results automatically only if search is active and user is not typing in a form
+    if (lastLoc && !isFormOpen) {
+      renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
+    }
+  } catch (e) {
+    console.warn("Background poll skipped:", e);
+  }
+}, 50000);
+
 /* ==========================================================================
    ADMIN PANEL & EXCEL LOGIC
    ========================================================================== */

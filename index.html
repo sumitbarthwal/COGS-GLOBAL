@@ -336,7 +336,24 @@
     box-shadow: 0 0 10px rgba(242, 166, 90, 0.2);
   }
   .appt-actions{
-    display:flex; align-items:center; gap:8px; flex-shrink:0;
+    display:flex; align-items:center; gap:6px; flex-shrink:0;
+  }
+  .call-btn{
+    background: rgba(242, 166, 90, 0.15);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .call-btn:hover{
+    background: var(--amber);
+    color: #0B1220;
   }
   .wa-btn{
     background: rgba(37, 211, 102, 0.15);
@@ -353,6 +370,23 @@
   }
   .wa-btn:hover{
     background: #25D366;
+    color: #0B1220;
+  }
+  .email-btn{
+    background: rgba(143, 180, 232, 0.15);
+    border: 1px solid var(--blue);
+    color: var(--blue);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .email-btn:hover{
+    background: var(--blue);
     color: #0B1220;
   }
   .appt-del-btn{
@@ -1211,12 +1245,28 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
         activeAppts.map((a, idx) => {
           const apptId = a.id || (a.ts ? String(a.ts) : (a.date + '_' + (a.by || '') + '_' + (a.location || '')));
           const cleanPhone = (s.contact || "").replace(/\D/g, "");
+          const surveyorEmail = (s.email || "").trim();
           
+          const callUrl = "tel:" + cleanPhone;
+
           let waMsg = "Survey Assignment Details:\nSurvey Assigned By: " + (a.by || "") + "\nDate: " + formatDateDisplay(a.date) + "\nLocation: " + (a.location || "");
           if (a.ref) {
             waMsg += "\nCOGS Ref. No.: " + a.ref;
           }
           const waUrl = "https://wa.me/91" + cleanPhone + "?text=" + encodeURIComponent(waMsg);
+
+          let emailBtnMarkup = '';
+          if (surveyorEmail && surveyorEmail.includes("@")) {
+            const mailSubject = a.ref 
+              ? "Surveyor Appointment for COGS Ref. No. " + a.ref 
+              : "Surveyor Appointment";
+            const mailBody = "Dear Team,\n\nYou have been appointed for conducting survey of Cogs Ref. No. " + (a.ref || "N/A") + " at location " + (a.location || "N/A") + " on date " + formatDateDisplay(a.date) + ". Rest details as under:-\n\nWith Regards,\n" + (a.by || "Operations Team") + "\nCOGS Global";
+            
+            const mailUrl = "mailto:" + encodeURIComponent(surveyorEmail) + 
+                            "?subject=" + encodeURIComponent(mailSubject) + 
+                            "&body=" + encodeURIComponent(mailBody);
+            emailBtnMarkup = '<a href="' + mailUrl + '" class="email-btn" title="Send Email Notification">📧 Email</a>';
+          }
 
           const refBadge = a.ref ? ' | Ref: ' + escapeHtml(a.ref) : '';
 
@@ -1229,7 +1279,9 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
               refBadge +
             '</span>' +
             '<div class="appt-actions">' +
+              '<a href="' + callUrl + '" class="call-btn" title="Call Surveyor">📞 Call</a>' +
               '<a href="' + waUrl + '" target="_blank" class="wa-btn" title="Notify on WhatsApp">📲 WhatsApp</a>' +
+              emailBtnMarkup +
               '<button type="button" class="appt-del-btn" data-appt-del-surveyor="' + escapeHtml(s.name) + '" data-appt-del-id="' + escapeHtml(apptId) + '" title="Delete Appointment">&times;</button>' +
             '</div>' +
           '</span>';

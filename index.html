@@ -400,8 +400,9 @@
     padding:6px 8px;
   }
   .appt-form input[type="date"]{ color-scheme: dark; }
-  .appt-form input.appt-name{ flex:1; min-width:110px; }
-  .appt-form input.appt-loc{ flex:1; min-width:110px; }
+  .appt-form input.appt-name{ flex:1; min-width:100px; }
+  .appt-form input.appt-loc{ flex:1; min-width:100px; }
+  .appt-form input.appt-ref{ flex:1; min-width:110px; }
   .appt-form button{
     font-family:'Space Grotesk', sans-serif;
     font-weight:600;
@@ -1246,8 +1247,13 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
           const apptId = a.id || (a.ts ? String(a.ts) : (a.date + '_' + (a.by || '') + '_' + (a.location || '')));
           const cleanPhone = (s.contact || "").replace(/\D/g, "");
           
-          const waMsg = "Survey Assignment Details:\nSurvey Assigned By: " + (a.by || "") + "\nDate: " + formatDateDisplay(a.date) + "\nLocation: " + (a.location || "");
+          let waMsg = "Survey Assignment Details:\nSurvey Assigned By: " + (a.by || "") + "\nDate: " + formatDateDisplay(a.date) + "\nLocation: " + (a.location || "");
+          if (a.ref) {
+            waMsg += "\nCOGS Ref. No.: " + a.ref;
+          }
           const waUrl = "https://wa.me/91" + cleanPhone + "?text=" + encodeURIComponent(waMsg);
+
+          const refBadge = a.ref ? ' | Ref: ' + escapeHtml(a.ref) : '';
 
           return '<span class="appt-tag ' + (idx === 0 ? 'first-appt' : '') + '">' +
             '<span>' +
@@ -1255,6 +1261,7 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
               'Appointed for "' + escapeHtml(formatDateDisplay(a.date)) + '"' +
               ' by "' + escapeHtml(a.by) + '"' +
               (a.location ? ' at "' + escapeHtml(a.location) + '"' : '') +
+              refBadge +
             '</span>' +
             '<div class="appt-actions">' +
               '<a href="' + waUrl + '" target="_blank" class="wa-btn" title="Notify on WhatsApp">📲 WhatsApp</a>' +
@@ -1273,6 +1280,7 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
           '<input type="date" class="appt-date" value="' + todayStr + '">' +
           '<input type="text" class="appt-name" placeholder="Assigned By" maxlength="40">' +
           '<input type="text" class="appt-loc" placeholder="Location" maxlength="50">' +
+          '<input type="text" class="appt-ref" placeholder="COGS Ref. No. (Optional)" maxlength="40">' +
           '<button type="button" class="save" data-appt-save="' + i + '">Save</button>' +
           '<button type="button" class="cancel" data-appt-cancel="' + i + '">Cancel</button>' +
         '</div>' +
@@ -1390,10 +1398,12 @@ function attachApptHandlers(currentList){
       const dateInput = form.querySelector(".appt-date");
       const nameInput = form.querySelector(".appt-name");
       const locInput = form.querySelector(".appt-loc");
+      const refInput = form.querySelector(".appt-ref");
       
       const dateVal = dateInput.value;
       const nameVal = nameInput.value.trim();
       const locVal = locInput.value.trim();
+      const refVal = refInput ? refInput.value.trim() : "";
       
       let hasError = false;
       if (!dateVal) { dateInput.style.borderColor = "var(--danger)"; hasError = true; }
@@ -1420,6 +1430,7 @@ function attachApptHandlers(currentList){
           date: dateVal,
           by: nameVal,
           location: locVal,
+          ref: refVal,
           ts: Date.now()
         };
 
@@ -1782,6 +1793,24 @@ async function exportMonthlyReport(year, monthIdx, monthName){
   ws1.columns.forEach(col => { col.width = 15; });
   ws1.getColumn(1).width = 26;
   ws1.getColumn(2).width = 22;
+
+  // Add Detailed Appointment Log to Sheet 2
+  ws2.addRow(['Surveyor Name', 'Date', 'Assigned By', 'Location', 'COGS Ref. No.']);
+  const hRow2 = ws2.getRow(1);
+  hRow2.font = { bold: true, color: { argb: 'FFE7ECF3' } };
+  hRow2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF16213A' } };
+
+  Object.keys(latestAppts).forEach(sName => {
+    const rawAppts = latestAppts[sName];
+    const apptList = Array.isArray(rawAppts) ? rawAppts : (rawAppts ? [rawAppts] : []);
+    const monthPrefix = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+    apptList.forEach(a => {
+      if (a && a.date && a.date.startsWith(monthPrefix)) {
+        ws2.addRow([sName, a.date, a.by || '-', a.location || '-', a.ref || '-']);
+      }
+    });
+  });
+  ws2.columns.forEach(col => { col.width = 22; });
 
   const buffer = await wb.xlsx.writeBuffer();
   saveAs(new Blob([buffer]), `Surveyor_Matrix_${monthName}_${year}.xlsx`);

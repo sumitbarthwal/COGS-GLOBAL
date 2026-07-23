@@ -848,7 +848,7 @@ const CONFIG = {
 };
 
 async function fetchWithRetry(url, options, attempts){
-  const tries = attempts || 3;
+  const tries = attempts || 2;
   let lastErr = null;
   for (let i = 0; i < tries; i++){
     try {
@@ -858,7 +858,7 @@ async function fetchWithRetry(url, options, attempts){
     } catch (e){
       lastErr = e;
     }
-    if (i < tries - 1) await new Promise(r => setTimeout(r, 250 * (i + 1)));
+    if (i < tries - 1) await new Promise(r => setTimeout(r, 200 * (i + 1)));
   }
   throw lastErr;
 }
@@ -893,9 +893,7 @@ async function fetchAppointments(){
         { headers: { "X-Master-Key": CONFIG.jsonbinApiKey } },
         2
       );
-      if (!res.ok) {
-        console.error("JSONBin Fetch Error:", res.status, res.statusText);
-      } else {
+      if (res.ok) {
         const data = await res.json();
         if (data && data.record && typeof data.record === "object") {
           delete data.record._status;
@@ -907,7 +905,7 @@ async function fetchAppointments(){
         }
       }
     } catch (e) {
-      console.error("JSONBin Network Error during fetch:", e);
+      console.warn("JSONBin Fetch skipped:", e.message);
     }
   }
   try {
@@ -934,7 +932,7 @@ async function saveAppointments(obj){
 
   if (CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId){
     try {
-      const res = await fetchWithRetry(
+      await fetchWithRetry(
         "https://api.jsonbin.io/v3/b/" + CONFIG.jsonbinBinId,
         {
           method: "PUT",
@@ -946,13 +944,8 @@ async function saveAppointments(obj){
         },
         2
       );
-      if (!res.ok) {
-        console.error("JSONBin Save Error:", res.status, res.statusText);
-      } else {
-        console.log("Successfully synced appointment to cloud!");
-      }
     } catch (e) { 
-      console.error("JSONBin Network Error during save:", e); 
+      console.warn("JSONBin Save skipped:", e.message); 
     }
   }
   try { localStorage.setItem(APPT_STORAGE_KEY, JSON.stringify(trimmed)); } catch (e) {}
@@ -963,16 +956,18 @@ const geocodeCache = new Map();
 
 async function googlePlaceSearch(query){
   if (!CONFIG.googleMapsApiKey) return [];
-  const url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=" +
-    encodeURIComponent(query + " India") + "&region=in&key=" + CONFIG.googleMapsApiKey;
-  const res = await fetchWithRetry(url, {}, 2);
-  const data = await res.json();
-  return (data.results || []).map(r => ({
-    lat: r.geometry.location.lat,
-    lon: r.geometry.location.lng,
-    state: "",
-    label: r.name
-  }));
+  try {
+    const url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=" +
+      encodeURIComponent(query + " India") + "&region=in&key=" + CONFIG.googleMapsApiKey;
+    const res = await fetchWithRetry(url, {}, 2);
+    const data = await res.json();
+    return (data.results || []).map(r => ({
+      lat: r.geometry.location.lat,
+      lon: r.geometry.location.lng,
+      state: "",
+      label: r.name
+    }));
+  } catch(e) { return []; }
 }
 
 async function osrmRoadDistanceMatrix(origin, destinations){
@@ -980,7 +975,7 @@ async function osrmRoadDistanceMatrix(origin, destinations){
     .map(p => p.lon.toFixed(6) + "," + p.lat.toFixed(6))
     .join(";");
   const url = "https://router.project-osrm.org/table/v1/driving/" + coords + "?sources=0&annotations=distance";
-  const res = await fetchWithRetry(url, {}, 3);
+  const res = await fetchWithRetry(url, {}, 2);
   const data = await res.json();
   if (data.code !== "Ok" || !data.distances || !data.distances[0]) throw new Error("table-failed");
   return data.distances[0].slice(1).map(m => (m === null ? null : m / 1000));
@@ -1008,7 +1003,7 @@ async function fetchRoadDistanceMatrix(origin, destinations){
     try {
       const km = await googleRoadDistanceMatrix(origin, destinations);
       if (km) return km;
-    } catch (e){ /* fall through to OSRM */ }
+    } catch (e){ /* fall through */ }
   }
   try {
     return await osrmRoadDistanceMatrix(origin, destinations);
@@ -1026,28 +1021,27 @@ async function geocodeExact(query){
     geocodeCache.set(key, loc);
     return loc;
   }
-  if (CONFIG.googleMapsApiKey){
-    const googleResults = await googlePlaceSearch(query);
-    if (googleResults.length){
-      geocodeCache.set(key, googleResults[0]);
-      return googleResults[0];
-    }
-  }
+  
   const photonResult = await fetchPhotonSuggestions(query, 1);
   if (photonResult.length){
     geocodeCache.set(key, photonResult[0]);
     return photonResult[0];
   }
 
-  const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=in&q=" + encodeURIComponent(query);
-  const res = await fetchWithRetry(url, { headers: { "Accept": "application/json" } }, 3);
-  const data = await res.json();
-  if (!data || data.length === 0) throw new Error("not-found");
-  const item = data[0];
-  const state = (item.address && item.address.state) || "";
-  const loc = { lat: parseFloat(item.lat), lon: parseFloat(item.lon), state: state, label: item.display_name.split(",")[0] };
-  geocodeCache.set(key, loc);
-  return loc;
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=in&q=" + encodeURIComponent(query);
+    const res = await fetchWithRetry(url, { headers: { "Accept": "application/json" } }, 2);
+    const data = await res.json();
+    if (data && data.length > 0) {
+      const item = data[0];
+      const state = (item.address && item.address.state) || "";
+      const loc = { lat: parseFloat(item.lat), lon: parseFloat(item.lon), state: state, label: item.display_name.split(",")[0] };
+      geocodeCache.set(key, loc);
+      return loc;
+    }
+  } catch(e){}
+
+  throw new Error("not-found");
 }
 
 async function fetchPhotonSuggestions(query, limit){
@@ -1079,13 +1073,8 @@ async function fetchPhotonSuggestions(query, limit){
 }
 
 async function fetchSuggestions(query){
-  if (CONFIG.googleMapsApiKey){
-    const googleResults = await googlePlaceSearch(query);
-    if (googleResults.length) return googleResults.slice(0, 6);
-  }
-
-  const photon = await fetchPhotonSuggestions(query, 8);
-  if (photon.length) return photon.slice(0, 6);
+  const photon = await fetchPhotonSuggestions(query, 6);
+  if (photon.length) return photon;
 
   try {
     const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&countrycodes=in&q=" + encodeURIComponent(query);
@@ -1093,7 +1082,7 @@ async function fetchSuggestions(query){
     const data = await res.json();
     const seen = new Set();
     const out = [];
-    data.forEach(item => {
+    (data || []).forEach(item => {
       const name = item.display_name.split(",")[0];
       const state = (item.address && item.address.state) || "";
       const key = name.toLowerCase() + "|" + state.toLowerCase();
@@ -1125,16 +1114,17 @@ let lastLoc = null;
 let lastRanked = [];
 let lastRoadAvail = false;
 let activeFilter = "all";
+let isUserTypingAppt = false;
 
 function renderSuggestions(list){
   activeSuggestions = list;
-  if (!list.length){
+  if (!list || !list.length){
     suggestionsEl.classList.remove("show");
     suggestionsEl.innerHTML = "";
     return;
   }
   suggestionsEl.innerHTML = list.map((s, i) =>
-    '<div class="suggestion-item" data-idx="' + i + '"><span class="s-name">' + s.label + '</span><span class="s-state">' + (s.state || "") + '</span></div>'
+    '<div class="suggestion-item" data-idx="' + i + '"><span class="s-name">' + escapeHtml(s.label) + '</span><span class="s-state">' + escapeHtml(s.state || "") + '</span></div>'
   ).join("");
   suggestionsEl.classList.add("show");
   Array.from(suggestionsEl.children).forEach(el => {
@@ -1160,9 +1150,13 @@ input.addEventListener("input", () => {
     return;
   }
   debounceTimer = setTimeout(async () => {
-    const list = await fetchSuggestions(q);
-    renderSuggestions(list);
-  }, 350);
+    try {
+      const list = await fetchSuggestions(q);
+      renderSuggestions(list);
+    } catch(err){
+      renderSuggestions([]);
+    }
+  }, 400);
 });
 
 document.addEventListener("click", (e) => {
@@ -1190,6 +1184,8 @@ filterBar.querySelectorAll(".chip").forEach(chip => {
 });
 
 function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
+  if (isUserTypingAppt) return;
+
   appointmentsCache = appointments || appointmentsCache || {};
   resultsEl.innerHTML = "";
 
@@ -1219,7 +1215,7 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
     ? 'Sorted by road distance, then job location match, then priority, then coverage match'
     : 'Road routing unavailable right now &mdash; sorted by straight-line distance instead, then job location match, then priority, then coverage match';
   resultsMeta.innerHTML =
-    'Nearest to <b>' + cityLabel + '</b> &middot; showing top ' + filteredRanked.length +
+    'Nearest to <b>' + escapeHtml(cityLabel) + '</b> &middot; showing top ' + filteredRanked.length +
     '<span>' + sortNote + '</span>';
   resultsMeta.classList.add("show");
 
@@ -1291,19 +1287,19 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
       '<div class="rank">' + (i+1) + '</div>' +
       '<div class="info">' +
         '<div class="name-row">' +
-          '<span class="name">' + s.name + '</span>' +
+          '<span class="name">' + escapeHtml(s.name) + '</span>' +
           (s.licensed ? '<span class="badge licensed">Licensed</span>' : '') +
-          '<span class="badge ' + priorityClass(s.priority) + '">' + s.priority + ' priority</span>' +
+          '<span class="badge ' + priorityClass(s.priority) + '">' + escapeHtml(s.priority) + ' priority</span>' +
           (s.locationMatch ? '<span class="badge based-here">Based here</span>' : '') +
           (s.coverageMatch ? '<span class="badge covers">Covers this state</span>' : '') +
         '</div>' +
         apptListMarkup +
         addBtnMarkup +
         apptFormMarkup +
-        '<div class="loc">Based in ' + s.city + ', ' + s.state + (coversQuery ? ' &middot; also covers ' + s.coverage : '') + '</div>' +
+        '<div class="loc">Based in ' + escapeHtml(s.city) + ', ' + escapeHtml(s.state) + (coversQuery ? ' &middot; also covers ' + escapeHtml(s.coverage) : '') + '</div>' +
         '<div class="contact">' +
-          '<a href="tel:' + s.contact + '">' + s.contact + '</a>' +
-          '<a href="mailto:' + s.email + '">' + s.email + '</a>' +
+          '<a href="tel:' + escapeHtml(s.contact) + '">' + escapeHtml(s.contact) + '</a>' +
+          '<a href="mailto:' + escapeHtml(s.email) + '">' + escapeHtml(s.email) + '</a>' +
         '</div>' +
       '</div>' +
       '<div class="distance"><div class="num">' + primaryKm + '</div><div class="unit">' + primaryUnit + '</div>' + secondaryLine + '</div>';
@@ -1320,6 +1316,7 @@ function attachApptHandlers(currentList){
       const form = document.getElementById("appt-form-" + idx);
       if (form){ form.style.display = "flex"; }
       btn.style.display = "none";
+      isUserTypingAppt = true;
     });
   });
 
@@ -1330,6 +1327,7 @@ function attachApptHandlers(currentList){
       if (form){ form.style.display = "none"; }
       const addBtn = resultsEl.querySelector('[data-appt-idx="' + idx + '"]');
       if (addBtn){ addBtn.style.display = ""; }
+      isUserTypingAppt = false;
     });
   });
 
@@ -1439,6 +1437,7 @@ function attachApptHandlers(currentList){
 
         const saved = await saveAppointments(latest);
         appointmentsCache = saved;
+        isUserTypingAppt = false;
 
         if (lastLoc){
           renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
@@ -1663,8 +1662,6 @@ async function deleteSurveyor(idx){
 document.getElementById("downloadDatabaseHtmlBtn").addEventListener("click", () => {
   try {
     let fullHtml = document.documentElement.outerHTML;
-    
-    // Inject current SURVEYORS list into DEFAULT_SURVEYORS in the backup HTML file
     const formattedRoster = JSON.stringify(SURVEYORS, null, 2);
     fullHtml = fullHtml.replace(/const DEFAULT_SURVEYORS = \[[\s\S]*?\];/, `const DEFAULT_SURVEYORS = ${formattedRoster};`);
 
@@ -1794,7 +1791,7 @@ async function exportMonthlyReport(year, monthIdx, monthName){
   ws1.getColumn(1).width = 26;
   ws1.getColumn(2).width = 22;
 
-  // Add Detailed Appointment Log to Sheet 2
+  // Detailed Appointment Log Sheet
   ws2.addRow(['Surveyor Name', 'Date', 'Assigned By', 'Location', 'COGS Ref. No.']);
   const hRow2 = ws2.getRow(1);
   hRow2.font = { bold: true, color: { argb: 'FFE7ECF3' } };
@@ -1816,14 +1813,16 @@ async function exportMonthlyReport(year, monthIdx, monthName){
   saveAs(new Blob([buffer]), `Surveyor_Matrix_${monthName}_${year}.xlsx`);
 }
 
-// Auto Background Sync
+// Auto Background Sync (Safeguarded)
 setInterval(async () => {
-  if (lastLoc && CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId) {
-    const latest = await fetchAppointments();
-    appointmentsCache = latest;
-    renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
+  if (lastLoc && CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId && !isUserTypingAppt) {
+    try {
+      const latest = await fetchAppointments();
+      appointmentsCache = latest;
+      renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
+    } catch(e){}
   }
-}, 10000);
+}, 12000);
 
 btn.addEventListener("click", runSearch);
 input.addEventListener("keydown", e => {

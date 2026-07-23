@@ -55,6 +55,13 @@
     flex-wrap:wrap;
   }
 
+  .header-actions{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+
   .eyebrow{
     font-family:'JetBrains Mono', monospace;
     font-size:12px;
@@ -86,7 +93,7 @@
     margin: 0 0 34px;
   }
 
-  .btn-admin{
+  .btn-admin, .btn-sync{
     background: var(--panel-2);
     border: 1px solid var(--line);
     color: var(--text);
@@ -102,7 +109,7 @@
     transition: all 0.15s ease;
     white-space: nowrap;
   }
-  .btn-admin:hover{
+  .btn-admin:hover, .btn-sync:hover{
     border-color: var(--accent);
     color: var(--accent);
     box-shadow: 0 0 12px rgba(61, 214, 196, 0.15);
@@ -617,7 +624,10 @@
       <div class="eyebrow">Cogs Global &middot; Field Ops</div>
       <h1>Surveyor Finder</h1>
     </div>
-    <button id="adminBtn" class="btn-admin">🔑 Admin Login</button>
+    <div class="header-actions">
+      <button id="syncBtn" class="btn-sync" title="Sync Latest Cloud Data">🔄 Sync Data</button>
+      <button id="adminBtn" class="btn-admin">🔑 Admin Login</button>
+    </div>
   </div>
   
   <p class="sub">Type a city of survey — get the nearest in-house surveyors, ranked by road distance, then job location match, then priority for survey, then out-of-state coverage match.</p>
@@ -954,22 +964,6 @@ async function saveAppointments(obj){
 
 const geocodeCache = new Map();
 
-async function googlePlaceSearch(query){
-  if (!CONFIG.googleMapsApiKey) return [];
-  try {
-    const url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query=" +
-      encodeURIComponent(query + " India") + "&region=in&key=" + CONFIG.googleMapsApiKey;
-    const res = await fetchWithRetry(url, {}, 2);
-    const data = await res.json();
-    return (data.results || []).map(r => ({
-      lat: r.geometry.location.lat,
-      lon: r.geometry.location.lng,
-      state: "",
-      label: r.name
-    }));
-  } catch(e) { return []; }
-}
-
 async function osrmRoadDistanceMatrix(origin, destinations){
   const coords = [origin, ...destinations]
     .map(p => p.lon.toFixed(6) + "," + p.lat.toFixed(6))
@@ -981,30 +975,7 @@ async function osrmRoadDistanceMatrix(origin, destinations){
   return data.distances[0].slice(1).map(m => (m === null ? null : m / 1000));
 }
 
-async function googleRoadDistanceMatrix(origin, destinations){
-  if (!CONFIG.googleMapsApiKey) return null;
-  const out = [];
-  const chunkSize = 25;
-  for (let i = 0; i < destinations.length; i += chunkSize){
-    const chunk = destinations.slice(i, i + chunkSize);
-    const destParam = chunk.map(p => p.lat + "," + p.lon).join("|");
-    const url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=" +
-      origin.lat + "," + origin.lon + "&destinations=" + destParam + "&key=" + CONFIG.googleMapsApiKey;
-    const res = await fetchWithRetry(url, {}, 2);
-    const data = await res.json();
-    const elements = (data.rows && data.rows[0] && data.rows[0].elements) || [];
-    elements.forEach(el => out.push(el.status === "OK" ? el.distance.value / 1000 : null));
-  }
-  return out;
-}
-
 async function fetchRoadDistanceMatrix(origin, destinations){
-  if (CONFIG.googleMapsApiKey){
-    try {
-      const km = await googleRoadDistanceMatrix(origin, destinations);
-      if (km) return km;
-    } catch (e){ /* fall through */ }
-  }
   try {
     return await osrmRoadDistanceMatrix(origin, destinations);
   } catch (e){
@@ -1098,6 +1069,7 @@ async function fetchSuggestions(query){
 
 const input = document.getElementById("cityInput");
 const btn = document.getElementById("searchBtn");
+const syncBtn = document.getElementById("syncBtn");
 const status = document.getElementById("status");
 const statusText = document.getElementById("statusText");
 const errorBox = document.getElementById("errorBox");
@@ -1114,7 +1086,6 @@ let lastLoc = null;
 let lastRanked = [];
 let lastRoadAvail = false;
 let activeFilter = "all";
-let isUserTypingAppt = false;
 
 function renderSuggestions(list){
   activeSuggestions = list;
@@ -1184,8 +1155,6 @@ filterBar.querySelectorAll(".chip").forEach(chip => {
 });
 
 function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
-  if (isUserTypingAppt) return;
-
   appointmentsCache = appointments || appointmentsCache || {};
   resultsEl.innerHTML = "";
 
@@ -1316,7 +1285,6 @@ function attachApptHandlers(currentList){
       const form = document.getElementById("appt-form-" + idx);
       if (form){ form.style.display = "flex"; }
       btn.style.display = "none";
-      isUserTypingAppt = true;
     });
   });
 
@@ -1327,7 +1295,6 @@ function attachApptHandlers(currentList){
       if (form){ form.style.display = "none"; }
       const addBtn = resultsEl.querySelector('[data-appt-idx="' + idx + '"]');
       if (addBtn){ addBtn.style.display = ""; }
-      isUserTypingAppt = false;
     });
   });
 
@@ -1437,7 +1404,6 @@ function attachApptHandlers(currentList){
 
         const saved = await saveAppointments(latest);
         appointmentsCache = saved;
-        isUserTypingAppt = false;
 
         if (lastLoc){
           renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
@@ -1518,6 +1484,24 @@ async function runSearch(){
     status.classList.remove("show");
   }
 }
+
+// Manual Sync Handler
+syncBtn.addEventListener("click", async () => {
+  syncBtn.disabled = true;
+  syncBtn.textContent = "🔄 Syncing...";
+  try {
+    const latest = await fetchAppointments();
+    appointmentsCache = latest;
+    if (lastLoc) {
+      renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
+    }
+  } catch(e) {
+    console.warn("Manual sync failed", e);
+  } finally {
+    syncBtn.disabled = false;
+    syncBtn.textContent = "🔄 Sync Data";
+  }
+});
 
 /* ==========================================================================
    ADMIN PANEL & EXCEL LOGIC
@@ -1812,17 +1796,6 @@ async function exportMonthlyReport(year, monthIdx, monthName){
   const buffer = await wb.xlsx.writeBuffer();
   saveAs(new Blob([buffer]), `Surveyor_Matrix_${monthName}_${year}.xlsx`);
 }
-
-// Auto Background Sync (Safeguarded)
-setInterval(async () => {
-  if (lastLoc && CONFIG.jsonbinApiKey && CONFIG.jsonbinBinId && !isUserTypingAppt) {
-    try {
-      const latest = await fetchAppointments();
-      appointmentsCache = latest;
-      renderResults(lastLoc.label, lastRanked, lastRoadAvail, appointmentsCache);
-    } catch(e){}
-  }
-}, 12000);
 
 btn.addEventListener("click", runSearch);
 input.addEventListener("keydown", e => {

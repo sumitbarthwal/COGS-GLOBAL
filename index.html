@@ -1271,9 +1271,10 @@ function renderResults(cityLabel, ranked, roadDistanceAvailable, appointments){
             const mailBody = "Dear Team,\n\nYou have been appointed for conducting survey of Cogs Ref. No. " + (a.ref || "N/A") + " at location " + (a.location || "N/A") + " on date " + formatDateDisplay(a.date) + ". Rest details as under:-\n\nWith Regards,\n" + (a.by || "Operations Team") + "\nCOGS Global";
             
             const mailUrl = "mailto:" + encodeURIComponent(surveyorEmail) + 
-                            "?subject=" + encodeURIComponent(mailSubject) + 
+                            "?cc=support@cogsglobal.com" +
+                            "&subject=" + encodeURIComponent(mailSubject) + 
                             "&body=" + encodeURIComponent(mailBody);
-            emailBtnMarkup = '<a href="' + mailUrl + '" class="email-btn" title="Send Email Notification">📧 Email</a>';
+            emailBtnMarkup = '<a href="' + mailUrl + '" class="email-btn" title="Send Email Notification (CC: support@cogsglobal.com)">📧 Email</a>';
           }
 
           const refBadge = a.ref ? ' | Ref: ' + escapeHtml(a.ref) : '';

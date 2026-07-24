@@ -664,9 +664,83 @@
     .distance{ grid-column: 1 / -1; text-align:left; }
     .header-bar{ flex-direction:column; gap:10px; }
   }
+  body.locked > :not(.password-gate){ display:none !important; }
+  .password-gate{
+    position: fixed; inset: 0; z-index: 9999;
+    background: radial-gradient(circle at 20% -10%, #16213A 0%, #0B1220 45%), var(--bg);
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .password-gate.hidden{ display:none; }
+  .gate-panel{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 36px 32px;
+    max-width: 340px;
+    width: 100%;
+    text-align: center;
+  }
+  .gate-panel h2{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:700;
+    font-size: 22px;
+    margin: 0 0 8px;
+  }
+  .gate-panel p{
+    color: var(--text-dim);
+    font-size: 13.5px;
+    line-height:1.6;
+    margin: 0 0 22px;
+  }
+  .gate-panel input{
+    width:100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 13px 16px;
+    color: var(--text);
+    font-family:'JetBrains Mono', monospace;
+    font-size:16px;
+    text-align:center;
+    letter-spacing: 3px;
+    outline:none;
+    margin-bottom: 14px;
+  }
+  .gate-panel input:focus{ border-color: var(--accent); }
+  .gate-panel button{
+    width:100%;
+    background: var(--accent);
+    color: #05221D;
+    border:none;
+    border-radius:9px;
+    padding: 13px;
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+  }
+  .gate-panel button:hover{ opacity:0.88; }
+  .gate-error{
+    color: var(--danger);
+    font-size: 12.5px;
+    margin-top: 12px;
+    display:none;
+  }
+  .gate-error.show{ display:block; }
 </style>
 </head>
-<body>
+<body class="locked">
+
+<div class="password-gate" id="passwordGate">
+  <div class="gate-panel">
+    <h2>🔒 Surveyor Finder</h2>
+    <p>Enter the access password to continue</p>
+    <input type="password" id="gatePassInput" placeholder="Password" autocomplete="off">
+    <button id="gateSubmitBtn">Unlock</button>
+    <div class="gate-error" id="gateError">Incorrect password. Try again.</div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <div class="header-bar">
@@ -777,6 +851,34 @@
 </div>
 
 <script>
+// Simple access gate: keeps casual visitors out, not a real security boundary
+// (like any client-side check, the password is visible to anyone who views
+// source — it's meant as a soft door, not encryption).
+const GATE_PASSWORD = "COGSGlobal";
+const passwordGate = document.getElementById("passwordGate");
+const gatePassInput = document.getElementById("gatePassInput");
+const gateSubmitBtn = document.getElementById("gateSubmitBtn");
+const gateError = document.getElementById("gateError");
+
+function tryUnlock(){
+  if (gatePassInput.value.trim() === GATE_PASSWORD){
+    document.body.classList.remove("locked");
+    passwordGate.classList.add("hidden");
+  } else {
+    gateError.classList.add("show");
+    gatePassInput.value = "";
+    gatePassInput.focus();
+  }
+}
+gateSubmitBtn.addEventListener("click", tryUnlock);
+gatePassInput.addEventListener("keydown", e => {
+  if (e.key === "Enter"){
+    e.preventDefault();
+    tryUnlock();
+  }
+});
+gatePassInput.focus();
+
 const DEFAULT_SURVEYORS = [
   {name:"Akash Raval Shailenbhai", city:"Ahmedabad", state:"Gujarat", contact:"7567572653", email:"akash.raval@cogsglobal.com", coverage:"NIL", priority:"Low", licensed:false},
   {name:"Amit Kumar Yadav", city:"Delhi NCR", state:"Delhi", contact:"8081168938", email:"operation14@cogsglobal.com", coverage:"Haryana, Punjab, Uttar Pradesh, Uttarakhand, Rajasthan", priority:"High", licensed:false},
